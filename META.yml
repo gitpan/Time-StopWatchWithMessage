@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Time-StopWatchWithMessage
-version:            0.01
+version:            0.02
 abstract:           Calculate a interval between Previous and Current with a message.
 author:
     - kuniyoshi.kouji <kuniyoshi@cpan.org>
@@ -15,7 +15,7 @@ no_index:
     directory:
         - t
         - inc
-generated_by:       ExtUtils::MakeMaker version 6.55_02
+generated_by:       ExtUtils::MakeMaker version 6.56
 meta-spec:
     url:      http://module-build.sourceforge.net/META-spec-v1.4.html
     version:  1.4
