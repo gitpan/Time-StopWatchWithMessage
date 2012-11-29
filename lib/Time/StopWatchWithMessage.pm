@@ -1,20 +1,22 @@
 package Time::StopWatchWithMessage;
-
 use strict;
 use warnings;
-use Time::HiRes qw( gettimeofday  tv_interval );
+use List::Util qw( sum max reduce );
+use List::MoreUtils qw( first_index );
+use Time::HiRes qw( gettimeofday tv_interval );
 
-our $VERSION = '0.02';
+our $VERSION     = "0.06";
+our $IS_REALTIME = 0;
+our $LENGTH      = 3;
 
-sub new {
-    my $class = shift;
-
-    return bless [ ], $class;
-}
+sub new { bless [ ], shift }
 
 sub start {
     my $self    = shift;
     my $message = shift || __PACKAGE__ . ">>> Start watching.";
+
+    $self->stop
+        if $self->_does_stop_need;
 
     push @{ $self }, { time => [ gettimeofday ], message => $message };
 
@@ -30,26 +32,70 @@ sub stop {
 
     push @{ $self }, $previous;
 
+    if ( $IS_REALTIME ) {
+        warn sprintf "%s - %.${LENGTH}f[s]\n", $previous->{message}, $previous->{time};
+    }
+
     return $self;
+}
+
+sub _does_stop_need {
+    my $self = shift;
+    return @{ $self } && ref $self->[-1]{time} eq ref [ ];
+}
+
+sub collapse {
+    my $self = shift;
+
+    $self->stop
+        if $self->_does_stop_need;
+
+    my $watches_ref = reduce {
+        my $i = first_index { $_->{message} eq $b->{message} } @{ $a };
+
+        if ( $i >= 0 ) {
+            $a->[ $i ]{time} += $b->{time};
+            $a->[ $i ]{count}++;
+        }
+        else {
+            push @{ $a }, $b;
+        }
+
+        $a;
+    } ( [ ], @{ $self } );
+
+    return bless $watches_ref, ref $self;
 }
 
 sub _output {
     my $self = shift;
     my $FH   = shift;
 
-    require List::Util;
+    $self->stop
+        if $self->_does_stop_need;
 
-    my $sum = List::Util::sum( map { $_->{time} } @{ $self } );
+    my $sum    = sum( map { $_->{time} } @{ $self } );
+    my $max    = max( map { $_->{time} } @{ $self } );
+    my %length = (
+        time    => max( map { length int $_->{time} } @{ $self } ),
+        message => max( map { length $_->{message} }  @{ $self } ),
+    );
 
     OUTPUT_ALL_WATCHES:
-    while ( defined ( my $watch_ref = shift @{ $self } ) ) {
-        my $output = sprintf "%s - %f/%f = %f[%%]\n",
+    while ( defined( my $watch_ref = shift @{ $self } ) ) {
+        my $output = sprintf(
+            "%$length{message}s - %$length{time}.${LENGTH}f[s] / %$length{time}.${LENGTH}f[s] = %$length{time}.${LENGTH}f[%%]",
             $watch_ref->{message},
             $watch_ref->{time},
             $sum,
-            $watch_ref->{time} / $sum * 100;
+            $watch_ref->{time} / $sum * 100,
+        );
 
-        print { $FH } $output;
+        if ( $watch_ref->{count} ) {
+            $output = join q{; }, $output, sprintf "%d times measured.", $watch_ref->{count} + 1;
+        }
+
+        print { $FH } $output, "\n";
     }
 
     return;
@@ -62,17 +108,9 @@ sub output {
     return $self->_output( $FH );
 }
 
-sub print {
-    my $self = shift;
+sub print { shift->_output( *STDOUT ) }
 
-    return $self->_output( *STDOUT );
-}
-
-sub warn {
-    my $self = shift;
-
-    return $self->_output( *STDERR );
-}
+sub warn { shift->_output( *STDERR ) }
 
 1;
 
@@ -81,11 +119,14 @@ __END__
 
 =head1 NAME
 
-Time::StopWatchWithMessage - Calculate a interval between Previous and Current with a message.
+Time::StopWatchWithMessage - Calculate a interval between Previous and Current with a message
 
 =head1 SYNOPSIS
 
   use Time::StopWatchWithMessage;
+  $Time::StopWatchWithMessage::IS_REALTIME = 0;
+  $Time::StopWatchWithMessage::LENGTH      = 3;
+
   my $watch = Time::StopWatchWithMessage->new;
 
   $watch->start( "Initialize." );
@@ -96,9 +137,7 @@ Time::StopWatchWithMessage - Calculate a interval between Previous and Current w
   do_something( );
   $watch->stop->start( "Finalize." );
   do_finalize( );
-  $watch->stop;
-
-  $watch->warn;
+  $watch->stop->warn;
 
 =head1 DESCRIPTION
 
@@ -111,6 +150,20 @@ Note, this module hasn't care overhead of self executing.
 
 None.
 
+=head2 GLOBALS
+
+=over
+
+=item $Time::StopWatchWithMessage::IS_REALTIME
+
+Reports message per stop.
+
+=item $Time::StopWatchWithMessage::LENGTH
+
+Specifies a length of after floating point of the report.
+
+=back
+
 =head2 METHODS
 
 =over
@@ -122,6 +175,12 @@ Starts watching time.
 =item stop
 
 Stops watching time.
+
+=item collapse
+
+Collapses message which has same message.
+
+This is useful when you call start, and stop in loop.
 
 =item warn
 
